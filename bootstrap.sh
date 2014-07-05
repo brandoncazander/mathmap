@@ -10,4 +10,3 @@ source mathmap/bin/activate
 pip install -r requirements.txt
 echo "/vagrant/webapps/extensions/" >> /vagrant/mathmap/lib/python2.7/site-packages/mathjax.pth
 chmod +x ./run.sh
-./run.sh

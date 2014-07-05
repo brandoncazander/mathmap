@@ -7,3 +7,4 @@
 6. `/vagrant/run.sh`
 7. Visit [http://localhost:8100/index](http://localhost:8100/index) for the canvas view or [http://localhost:8100/list](http://localhost:8100/list) for the list view
 8. [Django Admin](http://localhost:8100/admin/) username=administrator password=mathmap
+9. After you're done, run `vagrant halt` to stop the VM or `vagrant destroy` to completely remove it
