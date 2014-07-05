@@ -1,0 +1,8 @@
+Django==1.6.2
+Markdown==2.4
+argparse==1.2.1
+backports.ssl-match-hostname==3.4.0.2
+distribute==0.6.24
+gunicorn==18.0
+tornado==3.2
+wsgiref==0.1.2

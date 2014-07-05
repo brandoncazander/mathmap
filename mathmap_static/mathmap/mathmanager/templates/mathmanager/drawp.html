@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<!--[if lt IE 7]>      <html class="no-js lt-ie9 lt-ie8 lt-ie7"> <![endif]-->
+<!--[if IE 7]>         <html class="no-js lt-ie9 lt-ie8"> <![endif]-->
+<!--[if IE 8]>         <html class="no-js lt-ie9"> <![endif]-->
+<!--[if gt IE 8]><!--> <html class="no-js"> <!--<![endif]-->
+	<head>
+		<meta charset="utf-8">
+		<meta http-equiv="X-UA-Compatible" content="IE=edge">
+		<title>Draw 2</title>
+		<meta name="description" content="">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+
+		{% load staticfiles %}
+
+		<script src="{% static "js/pdollar.js" %}"></script>
+
+		<!-- Place favicon.ico and apple-touch-icon.png in the root directory -->
+
+		<style type="text/css">
+			* {
+				margin: 0;
+				padding: 0;
+			}
+			html, body {
+				width: 100%;
+				height: 100%;
+			}
+			canvas {
+				display: block;
+				background-color: #dddddd;
+				position: absolute;
+				top: 140px;
+			}
+			div#dev {
+				width: 360px;
+				height: 708px;
+				position: absolute;
+				top: 0;
+				right: 0;
+				background-color: #e9e9e9;
+				padding: 20px;
+			}
+			div#controls {
+				width: 584px;
+				position: absolute;
+				left: 0;
+				top: 0;
+				height: 100px;
+				background-color: #a8a8a8;
+				text-align: center;
+				padding: 20px;
+			}
+			input#tfSymbolName, input#tfLatexCode {
+				width: 200px;
+				height: 40px;
+				margin-top: 5px;
+			}
+			input#bAddNew, input#bRecognize, input#bBox, input#bPoints, input#tfLatexCode, input#bClear {
+				height: 40px;
+				margin-top: 5px;
+			}
+		</style>
+	</head>
+	<body>
+
+		<div id="controls">
+			<input type="text" id="tfSymbolName" placeholder="Symbol Name" tabindex="1" />
+			<input type="text" id="tfLatexCode" placeholder="Latex" tabindex="2"/>
+			<input type="submit" id="bAddNew" value="Add"/>
+			<input type="button" id="bClear" value="Clear"/>
+
+			<input type="button" id="bRecognize" value="Recognize"/>
+			<input type="button" id="bBox" value="Draw Box"/>
+			<input type="button" id="bPoints" value="Refresh Points"/>
+		</div>
+
+		<canvas id="gesture"></canvas>
+
+		<div id="dev">
+			<h1>Dev Info</h1>
+			<div id="results">
+				<strong>X Average: </strong><span id="avg"></span>
+				<strong>Distance from last point: </strong><span id="dist"></span>
+				<strong>Latex: </strong><span id="tex"></span>
+				<p>Points: <span id="number"></span></p>
+				<div id="points"></div>
+				<div id="strokes"></div>
+			</div>
+		</div>
+
+		{% csrf_token %}
+
+		<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script>
+		<script type="text/javascript"><!--
+			function Stroke(avg, id) // constructor
+			{
+				this.AVG = avg;
+				this.ID = id; // stroke ID to which this point belongs (1,2,...)
+			}
+
+			//
+			// Startup
+			//
+			var _isDown, _points, _strokeID, _r, _g, _rc; // global variables
+			var _b; // bounding box
+			var _padding = 20; // padding global
+			var _c; // centroid
+			var _sumX, _countX; // used to calculate centroid on the fly
+			var _stroke; // store each stroke to calculate ID first
+			var _strokes; // store all strokes averages with their ID
+			function onLoadEvent()
+			{
+				_points = new Array(); // point array for current stroke
+				_stroke = new Array(); // temp point array for each stroke
+				_strokes = new Array(); // array of strokes and their respective strokeID's
+				_sumX = 0;
+				_countX = 0;
+				_strokeID = 0;
+				_r = new PDollarRecognizer();
+
+				var canvas = document.getElementById('gesture');
+				canvas.width = document.body.clientWidth - 400;
+				canvas.height = document.body.clientHeight - 300;
+				$('#controls').width(document.body.clientWidth - 440);
+				_g = canvas.getContext('2d');
+				_g.lineWidth = 3;
+				_g.font = "16px Gentilis";
+				
+				// Bounding box
+				_b = canvas.getContext('2d');
+				_b.lineWidth = 2;
+
+				// Centroid circle
+				_c = canvas.getContext('2d');
+				var clr = "rgb(176,54,50)";
+				_c.strokeStyle = clr;
+
+				_rc = getCanvasRect(canvas); // canvas rect on page
+				_g.fillStyle = "rgb(255,255,136)";
+				_g.fillRect(0, 0, _rc.width, 20);
+
+				_isDown = false;
+			}
+			function getCanvasRect(canvas)
+			{
+				var w = canvas.width;
+				var h = canvas.height;
+
+				var cx = canvas.offsetLeft;
+				var cy = canvas.offsetTop;
+				while (canvas.offsetParent != null)
+				{
+					canvas = canvas.offsetParent;
+					cx += canvas.offsetLeft;
+					cy += canvas.offsetTop;
+				}
+				return {x: cx, y: cy, width: w, height: h};
+			}
+			function getScrollY()
+			{
+				var scrollY = 0;
+				if (typeof(document.body.parentElement) != 'undefined')
+				{
+					scrollY = document.body.parentElement.scrollTop; // IE
+				}
+				else if (typeof(window.pageYOffset) != 'undefined')
+				{
+					scrollY = window.pageYOffset; // FF
+				}
+				return scrollY;
+			}
+			//
+			// Mouse Events
+			//
+			function mouseDownEvent(x, y, button)
+			{
+				document.onselectstart = function() { return false; } // disable drag-select
+				document.onmousedown = function() { return false; } // disable drag-select
+				console.log("mouseDownEvent");
+				if (button <= 1)
+				{
+					_isDown = true;
+					x -= _rc.x;
+					y -= _rc.y - getScrollY();
+					if (_strokeID == 0) // starting a new gesture
+					{
+						_points.length = 0;
+						_g.clearRect(0, 0, _rc.width, _rc.height);
+					}
+					// Centroid calc
+					_sumX += x;
+					_countX += 1;
+
+					_points[_points.length] = new Point(x, y, ++_strokeID);
+
+					drawText("Recording stroke #" + _strokeID + "...");
+					var clr = "rgb(" + rand(0,200) + "," + rand(0,200) + "," + rand(0,200) + ")";
+					_g.strokeStyle = clr;
+					_g.fillStyle = clr;
+					_g.fillRect(x - 4, y - 3, 9, 9);
+				}
+				else if (button == 2)
+				{
+					drawText("Recognizing gesture...");
+				}
+			}
+			function mouseMoveEvent(x, y, button)
+			{
+				if (_isDown)
+				{
+					x -= _rc.x;
+					y -= _rc.y - getScrollY();
+					// Centroid calc
+					_sumX += x;
+					_countX += 1; 
+
+					_points[_points.length] = new Point(x, y, _strokeID); // append
+					drawConnectedPoint(_points.length - 2, _points.length - 1);
+				}
+			}
+			function mouseUpEvent(x, y, button)
+			{
+				document.onselectstart = function() { return true; } // enable drag-select
+				document.onmousedown = function() { return true; } // enable drag-select
+				if (button <= 1)
+				{
+					if (_isDown)
+					{
+						_isDown = false;
+						drawText("Stroke #" + _strokeID + " recorded.");
+
+						// Check if it's in the current bounding box
+						// var cur_stroke = new Array();
+						// for (var i = 0; i < _points.length; i++) {
+						// 	if (_points[i].ID == _strokeID) {
+						// 		cur_stroke.push(_points[i]);
+						// 	}
+						// }
+
+						// Centroid calc
+						var avg = round(_sumX / _countX, 0);
+						$('#avg').html(avg);
+
+						_strokes[_strokes.length] = new Stroke(avg, _strokeID);
+
+						if (_strokes.length > 1) {
+							var difference = Math.abs(_strokes[_strokes.length - 2].AVG - avg);
+							$('#dist').html(difference);
+							// console.log("Difference of "+ difference +" from last stroke.");
+							
+							if (difference > 50) {
+								console.log("New symbol, recognize and reset");
+								var result = _r.Recognize(_points);
+								drawText("Result: " + result.Name + " (" + round(result.Score,2) + ").");
+								// Sender
+								console.log("Sent: "+ result.Name);
+								ws.send(result.Name);
+							}
+						}
+
+						// Reset sum and count
+						_sumX = 0;
+						_countX = 0;
+
+						/*
+						 * Recognize and draw bounding box and centroid
+						
+						var result = _r.Recognize(cur_stroke);
+						var centroid = Centroid(cur_stroke);
+						$('#strokes').append("Stroke #"+ _strokeID +": "+ result.Name +" (Score: "+ round(result.Score,2) +") Centroid("+ round(centroid.X, 0) +", "+ round(centroid.Y, 0) +")<br/>");
+
+						drawBoundingBox(cur_stroke);
+
+						*/
+					}
+				}
+				else if (button == 2) // segmentation with right-click
+				{
+					if (_points.length >= 10)
+					{
+						var result = _r.Recognize(_points);
+						drawText("Result: " + result.Name + " (" + round(result.Score,2) + ").");
+						// Sender
+						console.log("Sent: "+ result.Name);
+						ws.send(result.Name);
+					}
+					else
+					{
+						drawText("Too little input made. Please try again.");
+					}
+					_strokeID = 0; // signal to begin new gesture on next mouse-down
+				}
+			}
+			//
+			// Touch Events
+			//
+			function touchDownEvent(x, y)
+			{
+				document.onselectstart = function() { return false; } // disable drag-select
+				document.onmousedown = function() { return false; } // disable drag-select
+				_isDown = true;
+				x -= _rc.x;
+				y -= _rc.y - getScrollY();
+				if (_strokeID == 0) // starting a new gesture
+				{
+					_points.length = 0;
+					_g.clearRect(0, 0, _rc.width, _rc.height);
+				}
+				// Centroid calc
+				_sumX += x;
+				_countX += 1;
+
+				_points[_points.length] = new Point(x, y, ++_strokeID);
+				drawText("Recording stroke #" + _strokeID + "...");
+				var clr = "rgb(" + rand(0,200) + "," + rand(0,200) + "," + rand(0,200) + ")";
+				_g.strokeStyle = clr;
+				_g.fillStyle = clr;
+				_g.fillRect(x - 4, y - 3, 9, 9);
+			}
+			function touchMoveEvent(x, y)
+			{
+				if (_isDown)
+				{
+					x -= _rc.x;
+					y -= _rc.y - getScrollY();
+					// Centroid calc
+					_sumX += x;
+					_countX += 1; 
+
+					_points[_points.length] = new Point(x, y, _strokeID); // append
+					drawConnectedPoint(_points.length - 2, _points.length - 1);
+				}
+			}
+			function touchUpEvent(x, y)
+			{
+				document.onselectstart = function() { return true; } // enable drag-select
+				document.onmousedown = function() { return true; } // enable drag-select
+				if (_isDown)
+				{
+					_isDown = false;
+
+					// Check if it's in the current bounding box
+					// var cur_stroke = new Array();
+					// for (var i = 0; i < _points.length; i++) {
+					// 	if (_points[i].ID == _strokeID) {
+					// 		cur_stroke.push(_points[i]);
+					// 	}
+					// }
+
+					// var result = _r.Recognize(cur_stroke);
+					// var centroid = Centroid(cur_stroke);
+					// $('#strokes').append("#"+ _strokeID +": "+ result.Name +" (Score: "+ round(result.Score,2) +") Centroid("+ round(centroid.X, 0) +", "+ round(centroid.Y, 0) +")<br/>");
+
+					// drawBoundingBox(cur_stroke);
+					
+					// Centroid calc
+					var avg = round(_sumX / _countX, 0);
+					$('#avg').html(avg);
+
+					_strokes[_strokes.length] = new Stroke(avg, _strokeID);
+
+					if (_strokes.length > 1) {
+						var difference = Math.abs(_strokes[_strokes.length - 2].AVG - avg);
+						$('#dist').html(difference);
+						// console.log("Difference of "+ difference +" from last stroke.");
+						
+						if (difference > 50) {
+							console.log("New symbol, recognize and reset");
+							var result = _r.Recognize(_points);
+							drawText("Result: " + result.Name + " (" + round(result.Score,2) + ").");
+
+							$('#tex').append(result.Name);
+							// Sender
+							// console.log("Sent: "+ result.Name);
+							// ws.send(result.Name);
+						}
+					}
+
+					// Reset sum and count
+					_sumX = 0;
+					_countX = 0;
+				}
+			}
+			function gestureRecognize() {
+				if (_points.length >= 10)
+				{
+					var result = _r.Recognize(_points);
+					drawText("Result: " + result.Name + " (" + round(result.Score,2) + ").");
+					// Sender
+					console.log("Sent: "+ result.Name);
+					ws.send(result.Name);
+				}
+				else
+				{
+					drawText("Too little input made. Please try again.");
+				}
+				_strokeID = 0; // signal to begin new gesture on next mouse-down
+			}
+			function drawConnectedPoint(from, to)
+			{
+				_g.beginPath();
+				_g.moveTo(_points[from].X, _points[from].Y);
+				_g.lineTo(_points[to].X, _points[to].Y);
+				_g.closePath();
+				_g.stroke();
+			}
+			function Centroid(points)
+			{
+				var x = 0.0, y = 0.0;
+				for (var i = 0; i < points.length; i++) {
+					x += points[i].X;
+					y += points[i].Y;
+				}
+				x /= points.length;
+				y /= points.length;
+
+				return new Point(x, y, 0);
+			}
+			function drawBoundingBox(points) 
+			{
+				var minX = +Infinity, maxX = -Infinity, minY = +Infinity, maxY = -Infinity;
+				for (var i = 0; i < points.length; i++) {
+					minX = Math.min(minX, points[i].X);
+					minY = Math.min(minY, points[i].Y);
+					maxX = Math.max(maxX, points[i].X);
+					maxY = Math.max(maxY, points[i].Y);
+				}
+				minX -= _padding;
+				minY -= _padding;
+				maxX += _padding;
+				maxY += _padding;
+
+				// Draw bounding box
+				var clr = "rgb(176,54,50)";
+				_b.strokeStyle = clr;
+				_b.beginPath();
+				_b.moveTo(minX, minY);
+				_b.lineTo(minX, maxY);
+				_b.lineTo(maxX, maxY);
+				_b.lineTo(maxX, minY);
+				_b.lineTo(minX, minY);
+				_b.closePath();
+				_b.stroke();
+				
+				// Calc centroid
+				var centroid = Centroid(points);
+
+				// Draw centroid
+				var radius = 4;
+				var clr = "rgb(176,54,50)";
+				_c.beginPath();
+				_c.arc(centroid.X, centroid.Y, radius, 0, 2 * Math.PI, false);
+				_c.fillStyle = clr;
+				_c.fill();
+
+			}
+			function refreshPoints()
+			{
+				$('#points').html(_points.join());
+				console.log(_points);
+			}
+			function drawText(str)
+			{
+				_g.fillStyle = "rgb(255,255,136)";
+				_g.fillRect(0, 0, _rc.width, 20);
+				_g.fillStyle = "rgb(0,0,255)";
+				_g.fillText(str, 1, 14);
+			}
+			function rand(low, high)
+			{
+				return Math.floor((high - low + 1) * Math.random()) + low;
+			}
+			function round(n, d) // round 'n' to 'd' decimals
+			{
+				d = Math.pow(10, d);
+				return Math.round(n * d) / d
+			}
+			//
+			// Multistroke Adding and Clearing
+			//
+			function onClickAddExisting()
+			{
+				if (_points.length >= 10)
+				{
+					var pointclouds = document.getElementById('pointclouds');
+					var name = pointclouds[pointclouds.selectedIndex].value;
+					var num = _r.AddGesture(name, _points);
+					drawText("\"" + name + "\" added. Number of \"" + name + "\"s defined: " + num + ".");
+					_strokeID = 0; // signal to begin new gesture on next mouse-down
+				}
+			}
+			function onClickAddCustom()
+			{
+				var name = document.getElementById('tfSymbolName').value;
+				if (_points.length >= 10 && name.length > 0)
+				{
+					var num = _r.AddGesture(name, _points);
+					drawText("\"" + name + "\" added. Number of \"" + name + "\"s defined: " + num + ".");
+					_strokeID = 0; // signal to begin new gesture on next mouse-down
+					var latex = $('#tfLatexCode').val();
+					$.ajax({
+						type: "POST",
+						url: "/math/unistroke/",
+						data: {
+							csrfmiddlewaretoken: $('[name=csrfmiddlewaretoken]').attr('value'),
+							name: name,
+							unistroke: JSON.stringify(_points),
+							latex: latex,
+						},
+						success: function(data) {
+							console.log("Sent unistroke: "+ data);
+							$('#tfLatexCode').val('\\');
+						},
+						error: function(xhr, textStatus, errorThrown) {
+							console.log("Error: "+ errorThrown + xhr.status + xhr.responseText);
+						}
+					});
+				}
+			}
+			function onClickCustom()
+			{
+				document.getElementById('tfSymbolName').select();
+			}
+			function onClickDelete()
+			{
+				var num = _r.DeleteUserGestures(); // deletes any user-defined templates
+				alert("All user-defined gestures have been deleted. Only the 1 predefined gesture remains for each of the " + num + " types.");
+				_strokeID = 0; // signal to begin new gesture on next mouse-down
+			}
+			function onClickClearStrokes()
+			{
+				_points.length = 0;
+				_strokeID = 0;
+				_g.clearRect(0, 0, _rc.width, _rc.height);
+				drawText("Canvas cleared.");
+				$('#tfSymbolName').val('');
+				$('#tfLatexCode').val('\\');
+				$('#strokes').html('');
+			}
+		// -->
+		</script>
+		<script type="text/javascript">
+		$(document).ready(function() {
+
+			// var host = "107.170.216.222";
+			var host = "192.168.0.107";
+			var port = "443";
+			var uri = "/ws";
+
+			ws = new WebSocket("ws://" + host + ":" + port + uri);
+
+			// ws.onmessage = function(evt) {console.log("message received: " + evt.data)};
+
+			ws.onclose = function(evt) { 
+				console.log("Connection close");
+			};
+
+			ws.onopen = function(evt) {
+				console.log("Connection opened.");
+			}
+
+			onLoadEvent();
+			$('#gesture').on("touchstart", function(e) {
+				var touch = e.originalEvent.touches[0] || e.originalEvent.changedTouches[0];
+				e.preventDefault();
+				touchDownEvent(touch.clientX, touch.clientY);
+			});
+			$('#gesture').on("touchmove", function(e) {
+				var touch = e.originalEvent.touches[0] || e.originalEvent.changedTouches[0];
+				e.preventDefault();
+				touchMoveEvent(touch.clientX, touch.clientY);
+			});
+			$('#gesture').on("touchend", function(e) {
+				var touch = e.originalEvent.touches[0] || e.originalEvent.changedTouches[0];
+				e.preventDefault();
+				touchUpEvent(touch.clientX, touch.clientY);
+			});
+			$('#gesture').on("mousedown", function(event) {
+				mouseDownEvent(event.clientX, event.clientY, event.button);
+			});
+			$('#gesture').on("mousemove", function(event) {
+				mouseMoveEvent(event.clientX, event.clientY, event.button);
+			});
+			$('#gesture').on("mouseup", function(event) {
+				mouseUpEvent(event.clientX, event.clientY, event.button);
+			});
+			$('#gesture').on("contextmenu", function(event) {
+				return false;
+			});
+			$('#bAddNew').on("click", function(e) {
+				e.preventDefault();
+				onClickAddCustom();
+				$('#tfSymbolName').val('');
+			});
+			$('#bRecognize').on("click", function(e) {
+				e.preventDefault();
+				gestureRecognize();
+			});
+			$('#bBox').on("click", function(e) {
+				e.preventDefault();
+				drawBoundingBox(_points);
+			});
+			$('#bPoints').on("click", function(e) {
+				e.preventDefault();
+				refreshPoints();
+			});
+			$('#bClear').on("click", function(e) {
+				e.preventDefault();
+				onClickClearStrokes();
+			});
+
+			{% autoescape off %}
+				{% for stroke in unistrokes %}
+					var stroke = {{ stroke.unistroke }};
+					_r.AddGesture("{{ stroke.name }}", stroke);
+				{% endfor %}
+			{% endautoescape %}
+		});
+		</script>
+		<!-- Google Analytics: change UA-XXXXX-X to be your site's ID. -->
+		<script>
+			(function(b,o,i,l,e,r){b.GoogleAnalyticsObject=l;b[l]||(b[l]=
+			function(){(b[l].q=b[l].q||[]).push(arguments)});b[l].l=+new Date;
+			e=o.createElement(i);r=o.getElementsByTagName(i)[0];
+			e.src='//www.google-analytics.com/analytics.js';
+			r.parentNode.insertBefore(e,r)}(window,document,'script','ga'));
+			ga('create','UA-48550426-2');ga('send','pageview');
+		</script>
+
+	</body>
+
+</html>

@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<!--[if lt IE 7]>      <html class="no-js lt-ie9 lt-ie8 lt-ie7"> <![endif]-->
+<!--[if IE 7]>         <html class="no-js lt-ie9 lt-ie8"> <![endif]-->
+<!--[if IE 8]>         <html class="no-js lt-ie9"> <![endif]-->
+<!--[if gt IE 8]><!--> <html class="no-js"> <!--<![endif]-->
+	<head>
+		<meta charset="utf-8">
+		<meta http-equiv="X-UA-Compatible" content="IE=edge">
+		<title>Draw</title>
+		<meta name="description" content="">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+		{% load staticfiles %}
+
+		<script src="{% static "js/dollar.js" %}"></script>
+
+		<!-- Place favicon.ico and apple-touch-icon.png in the root directory -->
+
+		<style type="text/css">
+			* {
+				margin: 0;
+				padding: 0;
+			}
+			html, body {
+				width: 100%;
+				height: 100%;
+			}
+			textarea {
+				width: 600px;
+				height: 400px;
+				float: left;
+			}
+			canvas {
+				display: block;
+				background-color: #dddddd;
+			}
+			div#choices {
+				display: none;
+			}
+			div#controls {
+				width: 100%;
+				position: absolute;
+				left: 0;
+				bottom: 0;
+				height: 50px;
+				background-color: #a8a8a8;
+				text-align: center;
+			}
+			input#tfSymbolName {
+				float: left;
+				width: 200px;
+				height: 40px;
+				margin-top: 5px;
+			}
+			input#bAddNew {
+				float: right;
+				width: 100px;
+				height: 40px;
+				margin-top: 5px;
+			}
+		</style>
+	</head>
+	<body>
+
+		<div id="choices">
+			<form style="font-size:10pt">
+				<input type="radio" name="search" id="useGSS" checked>
+					<span style="font-weight:bold">Use Golden Section Search <i>(original)</i></span>
+				</input><br />
+				<input type="radio" name="search" id="useProtractor">
+					<span style="font-weight:bold">Use Protractor <i>(faster)</i></span>
+				</input>
+			</form>
+		</div>
+
+		<canvas id="gesture"></canvas>
+
+		<div id="controls">
+			<input type="text" id="tfSymbolName" placeholder="Symbol Name"/><input type="button" id="bAddNew" value="Add"/>
+		</div>
+
+		{% csrf_token %}
+
+		<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script>
+		<script type="text/javascript"><!--
+			//
+			// Startup
+			//
+			var ws;
+			
+			var _isDown, _points, _r, _g, _rc;
+			function onLoadEvent()
+			{
+				_points = new Array();
+				_r = new DollarRecognizer();
+
+				var canvas = document.getElementById('gesture');
+				canvas.width = document.body.clientWidth;
+				canvas.height = document.body.clientHeight - 50;
+				_g = canvas.getContext('2d');
+				_g.fillStyle = "rgb(0,0,225)";
+				_g.strokeStyle = "rgb(0,0,225)";
+				_g.lineWidth = 3;
+				_g.font = "16px Gentilis";
+				_rc = getCanvasRect(canvas); // canvas rect on page
+				_g.fillStyle = "rgb(255,255,136)";
+				_g.fillRect(0, 0, _rc.width, 20);
+
+				_isDown = false;
+
+			}
+			function getCanvasRect(canvas)
+			{
+				var w = canvas.width;
+				var h = canvas.height;
+
+				var cx = canvas.offsetLeft;
+				var cy = canvas.offsetTop;
+				while (canvas.offsetParent != null)
+				{
+					canvas = canvas.offsetParent;
+					cx += canvas.offsetLeft;
+					cy += canvas.offsetTop;
+				}
+				return {x: cx, y: cy, width: w, height: h};
+			}
+			function getScrollY()
+			{
+				var scrollY = 0;
+				if (typeof(document.body.parentElement) != 'undefined')
+				{
+					scrollY = document.body.parentElement.scrollTop; // IE
+				}
+				else if (typeof(window.pageYOffset) != 'undefined')
+				{
+					scrollY = window.pageYOffset; // FF
+				}
+				return scrollY;
+			}
+			//
+			// Mouse Events
+			//
+			function mouseDownEvent(x, y)
+			{
+				document.onselectstart = function() { return false; } // disable drag-select
+				document.onmousedown = function() { return false; } // disable drag-select
+				_isDown = true;
+				x -= _rc.x;
+				y -= _rc.y - getScrollY();
+				if (_points.length > 0)
+					_g.clearRect(0, 0, _rc.width, _rc.height);
+				_points.length = 1; // clear
+				_points[0] = new Point(x, y);
+				drawText("Recording unistroke..."+ _points[0]);
+				_g.fillRect(x - 4, y - 3, 9, 9);
+			}
+			function mouseMoveEvent(x, y)
+			{
+				if (_isDown)
+				{
+					x -= _rc.x;
+					y -= _rc.y - getScrollY();
+					_points[_points.length] = new Point(x, y); // append
+					drawConnectedPoint(_points.length - 2, _points.length - 1);
+					drawText("X: "+ x +" Y: "+ y);
+				}
+			}
+			function mouseUpEvent(x, y)
+			{
+				document.onselectstart = function() { return true; } // enable drag-select
+				document.onmousedown = function() { return true; } // enable drag-select
+				drawText("touch end");
+				if (_isDown)
+				{
+					_isDown = false;
+
+					if (_points.length >= 10)
+					{
+						var result = _r.Recognize(_points, document.getElementById('useProtractor').checked);
+						drawText("Result: " + result.Name + " (" + round(result.Score,2) + ").");
+						// Sender
+						console.log("Sent: "+ result.Name);
+						ws.send(result.Name);
+					}
+					else // fewer than 10 points were inputted
+					{
+						drawText("Too few points made. Please try again.");
+					}
+				}
+			}
+			function drawText(str)
+			{
+				_g.fillStyle = "rgb(255,255,136)";
+				_g.fillRect(0, 0, _rc.width, 20);
+				_g.fillStyle = "rgb(0,0,255)";
+				_g.fillText(str, 1, 14);
+			}
+			function drawConnectedPoint(from, to)
+			{
+				_g.beginPath();
+				_g.moveTo(_points[from].X, _points[from].Y);
+				_g.lineTo(_points[to].X, _points[to].Y);
+				_g.closePath();
+				_g.stroke();
+			}
+			function round(n, d) // round 'n' to 'd' decimals
+			{
+				d = Math.pow(10, d);
+				return Math.round(n * d) / d
+			}
+			//
+			// Unistroke Adding and Clearing
+			//
+			function onClickAddExisting()
+			{
+				if (_points.length >= 10)
+				{
+					var unistrokes = document.getElementById('unistrokes');
+					var name = unistrokes[unistrokes.selectedIndex].value;
+					var num = _r.AddGesture(name, _points);
+					drawText("\"" + name + "\" added. Number of \"" + name + "\"s defined: " + num + ".");
+				}
+			}
+			function onClickAddCustom()
+			{
+				var name = document.getElementById('tfSymbolName').value;
+				if (_points.length >= 10 && name.length > 0)
+				{
+					var num = _r.AddGesture(name, _points);
+					drawText("\"" + name + "\" added (" + num + ").");
+				}
+				console.log(name);
+				console.log(JSON.stringify(_points));
+				$.ajax({
+					type: "POST",
+					url: "/math/unistroke/",
+					data: {
+						csrfmiddlewaretoken: $('[name=csrfmiddlewaretoken]').attr('value'),
+						name: name,
+						unistroke: JSON.stringify(_points),
+					},
+					success: function(data) {
+						console.log("Sent unistroke: "+ data);
+					},
+					error: function(xhr, textStatus, errorThrown) {
+						console.log("Error: "+ errorThrown + xhr.status + xhr.responseText);
+					}
+				});
+			}
+			function onClickCustom()
+			{
+				document.getElementById('tfSymbolName').select();
+			}
+			function onClickDelete()
+			{
+				var num = _r.DeleteUserGestures(); // deletes any user-defined unistrokes
+				alert("All user-defined gestures have been deleted. Only the 1 predefined gesture remains for each of the " + num + " types.");
+			}
+		// -->
+		</script>
+		<script type="text/javascript">
+		$(document).ready(function() {
+
+			var host = "107.170.216.222";
+			var port = "443";
+			var uri = "/ws";
+
+			ws = new WebSocket("ws://" + host + ":" + port + uri);
+
+			// ws.onmessage = function(evt) {console.log("message received: " + evt.data)};
+
+			ws.onclose = function(evt) { 
+				console.log("Connection close");
+			};
+
+			ws.onopen = function(evt) {
+				console.log("Connection opened.");
+			}
+
+			onLoadEvent();
+			$('#gesture').on("touchstart", function(e) {
+				var touch = e.originalEvent.touches[0] || e.originalEvent.changedTouches[0];
+				e.preventDefault();
+				mouseDownEvent(touch.clientX, touch.clientY);
+			});
+			$('#gesture').on("touchmove", function(e) {
+				var touch = e.originalEvent.touches[0] || e.originalEvent.changedTouches[0];
+				e.preventDefault();
+				mouseMoveEvent(touch.clientX, touch.clientY);
+			});
+			$('#gesture').on("touchend", function(e) {
+				var touch = e.originalEvent.touches[0] || e.originalEvent.changedTouches[0];
+				e.preventDefault();
+				mouseUpEvent(touch.clientX, touch.clientY);
+			});
+			$('#gesture').on("mousedown", function(event) {
+				mouseDownEvent(event.clientX, event.clientY);
+			});
+			$('#gesture').on("mousemove", function(event) {
+				mouseMoveEvent(event.clientX, event.clientY);
+			});
+			$('#gesture').on("mouseup", function(event) {
+				mouseUpEvent(event.clientX, event.clientY);
+			});
+			$('#bAddNew').on("click", function(e) {
+				e.preventDefault();
+				onClickAddCustom();
+				$('#tfSymbolName').val('');
+			});
+
+			{% autoescape off %}
+				{% for stroke in unistrokes %}
+					var stroke = {{ stroke.unistroke }};
+					_r.AddGesture("{{ stroke.name }}", stroke);
+				{% endfor %}
+			{% endautoescape %}
+		});
+		</script>
+		<!-- Google Analytics: change UA-XXXXX-X to be your site's ID. -->
+		<script>
+			(function(b,o,i,l,e,r){b.GoogleAnalyticsObject=l;b[l]||(b[l]=
+			function(){(b[l].q=b[l].q||[]).push(arguments)});b[l].l=+new Date;
+			e=o.createElement(i);r=o.getElementsByTagName(i)[0];
+			e.src='//www.google-analytics.com/analytics.js';
+			r.parentNode.insertBefore(e,r)}(window,document,'script','ga'));
+			ga('create','UA-48550426-2');ga('send','pageview');
+		</script>
+
+	</body>
+
+</html>

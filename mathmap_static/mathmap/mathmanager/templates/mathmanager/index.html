@@ -1,0 +1,569 @@
+{% load math_extras %}
+<!DOCTYPE html>
+<!--[if lt IE 7]>      <html class="no-js lt-ie9 lt-ie8 lt-ie7"> <![endif]-->
+<!--[if IE 7]>         <html class="no-js lt-ie9 lt-ie8"> <![endif]-->
+<!--[if IE 8]>         <html class="no-js lt-ie9"> <![endif]-->
+<!--[if gt IE 8]><!--> <html class="no-js"> <!--<![endif]-->
+	<head>
+		<meta charset="utf-8">
+		<meta http-equiv="X-UA-Compatible" content="IE=edge">
+		<title>MathMap</title>
+		<meta name="description" content="">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+
+		<!-- Place favicon.ico and apple-touch-icon.png in the root directory -->
+
+		{% load staticfiles %}
+
+		<link rel="stylesheet" href="{% static "css/normalize.css" %}">
+		<link rel="stylesheet" href="{% static "css/main.css" %}">
+		<script src="{% static "js/vendor/modernizr-2.6.2.min.js" %}"></script>
+		<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+	</head>
+	<body>
+		<!--[if lt IE 7]>
+			<p class="browsehappy">You are using an <strong>outdated</strong> browser. Please <a href="http://browsehappy.com/">upgrade your browser</a> to improve your experience.</p>
+		<![endif]-->
+
+		<div id="header">
+			<div id="nav">
+				<h3>MathMap</h3>
+
+				<div id="controls">
+					<a href="#add" id="add">Add</a>
+					<a href="#zoomout" id="zout">-</a>
+					<a href="#zoomin" id="zin">+</a>
+					<a href="#repaint" id="repaint">repaint</a>
+					<a href="#clear" id="clear">clear canvas</a>
+					<a href="#lock" id="lock" class="unlocked">lock</a>
+				</div>
+
+				<div id="filterbox">
+					<input type="text" id="filter" placeholder="Filter"></input>
+					<a href="#clear" class="flclear" id="cleartags" style="display: none">x</a>
+				</div>
+			</div>
+
+			<div id="library">
+				<a href="#" id="a_library">Library &darr;</a>
+				<div id="dropdown" style="display: none">
+					<ul>
+					{% if library_maths %}
+						{% for math in library_maths %}
+						<li class="lib_drag" data-id="{{math.id}}">
+							{{ math.type }} {{ math.number }}
+							{# math.math|truncatewords:16|my_markdown #}
+							<span class="preview">{{ math.math|truncatewords:16 }}</span>
+						</li>
+						{% endfor %}
+					{% else %}
+						<p>Nothing in your library, sorry!</p>
+					{% endif %}
+					</ul>
+				</div>
+			</div>
+		</div>
+
+		{% if error_message %}<p><strong>{{ error_message }}</strong></p>{% endif %}
+
+		<div id="wrapper">
+			<div id="container">
+				{% for math in canvas_maths %}
+				<div id="{{ math.number|make_id }}" data-tags="{% for tag in math.tags|split_csv %}{{tag}} {% endfor %}" data-id="{{ math.id }}" class="mathbox" style="top: {{ math.position|get_pos_y }}px; left: {{ math.position|get_pos_x }}px">
+					<h4>{{ math.type }} {{ math.number }}</h4>
+					<div class="content">
+						{# math.math|my_markdown #}
+						{{ math.math }}
+						}
+					</div>
+					<div id="details">
+						<div id="tags" style="font-size: 0.4em">
+							<span>Tags:</span>
+							<ul>
+								{% for tag in math.tags|split_csv %}
+								<li class="tag">{{ tag }}</li>
+								{% endfor %}
+							</ul>
+						</div>
+						<div id="info">
+							Posted by <span>{{ math.user }}</span> on <span>{{ math.datetime }}</span>
+						</div>
+						<a href="#close" class="b_close" data-id="{{ math.id }}">x</a>
+					</div>
+				</div>
+				{% endfor %}
+			</div>
+		</div>
+
+		<div id="overlay" style="display: none">
+
+			<div id="add">
+
+				<form action="{% url 'mathmanager:add' %}" id="add_form" name="add_form" method="post">
+
+					{% csrf_token %}
+					<div id="type">
+						<select name="type">
+							<option>Definition</option>
+							<option>Theorem</option>
+							<option>Lemma</option>
+							<option>Proposition</option>
+							<option>Corollary</option>
+							<option>Example</option>
+						</select>
+					</div>
+
+					<label for="number"></label>
+					<input type="text" name="number" placeholder="Number"/>
+
+					<label for="math"></label>
+					<textarea id="text" name="math"></textarea>
+
+					<input type="text" name="tags" placeholder="Tags"/><br/>
+
+					<a href="#cancel" id="cancel">Cancel</a>
+					<input type="submit" id="b_add" value="Add"/>
+
+				</form>
+
+				<div id="preview_wrap">
+					<h4>Preview</h4>
+					<div id="preview">
+
+					</div>
+				</div>
+
+				<p id="instructions">Preview will start auto-updating after five seconds.</p>
+
+			</div>
+
+		</div>
+
+ 		<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script>
+		<script src="http://code.jquery.com/ui/1.10.4/jquery-ui.js"></script>
+		<script src="{% static "js/vendor/jquery.jsPlumb-1.5.5-min.js" %}"></script>
+		<script>window.jQuery || document.write('<script src="{% static "js/vendor/jquery-1.10.2.min.js" %}"><\/script>')</script>
+		<script src="{% static "js/plugins.js" %}"></script>
+		<script src="{% static "js/main.js" %}"></script>
+		<script src="{% static "js/iscroll-zoom.js" %}"></script>
+
+		<script>
+			$(document).ready(function() {
+				var ws;
+
+				// var host = "107.170.216.222";
+				var host = "localhost";
+				var port = "443";
+				var uri = "/ws";
+
+				ws = new WebSocket("ws://" + host + ":" + port + uri);
+
+				ws.onmessage = function(evt) {
+					console.log("message received: " + evt.data);
+					var name = evt.data;
+					$.ajax({
+						type: "POST",
+						url: "/math/latex/",
+						data: {
+							csrfmiddlewaretoken: $('[name=csrfmiddlewaretoken]').attr('value'),
+							name: name,
+						},
+						success: function(data) {
+							var caretPos = document.getElementById("text").selectionStart;
+						    var textAreaTxt = $("#text").val();
+						    $("#text").val(textAreaTxt.substring(0, caretPos) + data.code + " " + textAreaTxt.substring(caretPos));
+						},
+						error: function(xhr, textStatus, errorThrown) {
+							console.log("Error: "+ errorThrown + xhr.status + xhr.responseText);
+						}
+					});
+				};
+
+				ws.onclose = function(evt) {
+					console.log("Connection close");
+				};
+
+				ws.onopen = function(evt) {
+					console.log("Connection opened.");
+				}
+			});
+			MathJax.Hub.Config({
+				"tex2jax": { inlineMath: [ [ '$', '$' ] ] }
+			});
+			MathJax.Hub.Register.StartupHook("End", function() {
+				var myScroll = new IScroll("#wrapper", {
+					scrollX: true,
+					freeScroll: true,
+					bindToWrapper: true,
+					keyBindings: true,
+					zoom: true,
+					zoomMax: 1,
+					zoomMin: 0.4,
+					mouseWheel: true,
+					wheelAction: 'zoom'
+				});
+				jsPlumb.ready(function() {
+					jsPlumb.importDefaults({
+						Container : "container",
+						Anchors : [ "Bottom", "Top" ],
+						ConnectionsDetachable : true
+					});
+					var ajax_position = function(id, finalxPos, finalyPos) {
+						$.ajax({
+							type: "POST",
+							url: "/math/position/",
+							data: {
+								csrfmiddlewaretoken: $('[name=csrfmiddlewaretoken]').attr('value'),
+								id: id,
+								position: position,
+							},
+							success: function(data) {
+								console.log("Position changed: "+ data);
+							},
+							error: function(xhr, textStatus, errorThrown) {
+								console.log("Error: "+ errorThrown + xhr.status + xhr.responseText);
+							}
+						});
+					}
+					var ajax_connection = function(id, target) {
+						$.ajax({
+							type: "POST",
+							url: "/math/connection/",
+							data: {
+								csrfmiddlewaretoken: $('[name=csrfmiddlewaretoken]').attr('value'),
+								id: id,
+								target: target,
+							},
+							success: function(data) {
+								console.log("Connection added: "+ data);
+							},
+							error: function(xhr, textStatus, errorThrown) {
+								console.log("Error: "+ errorThrown + xhr.status + xhr.responseText);
+							}
+						});
+					}
+					jsPlumb.draggable($(".mathbox"), {
+						stop: function() {
+							var id = $(this).attr('data-id');
+							var finalOffset = $(this).offset();
+							var finalxPos = finalOffset.left | 0;
+							var finalyPos = finalOffset.top | 0;
+							position = (-myScroll.x + finalxPos) +","+ (-myScroll.y + finalyPos - 60);
+							ajax_position(id, position);
+						},
+						opacity: 0.9,
+						grid: [ 20, 20 ]
+					});
+					var endpointOptions = {
+						isSource: true,
+						paintStyle: {
+							fillStyle: "#ecf0f1"
+						},
+						connectorStyle: {
+							strokeStyle: "#ecf0f1",
+							lineWidth: 3
+						},
+						maxConnections: -1,
+						overlays: [
+							[ "Arrow", { foldback:0.6, location: 0.45 } ]
+						],
+						endpointStyle: {
+							fillStyle: "#ecf0f1"
+						},
+						isTarget: true,
+						dragAllowedWhenFull:false
+					};
+					jsPlumb.addEndpoint($(".mathbox"), endpointOptions);
+					jsPlumb.makeTarget($(".mathbox"), endpointOptions);
+					{% for math in canvas_maths %}
+						{% if math.connections != "0" %}
+						{% for connection in math.connections|split_csv %}
+							jsPlumb.connect({
+								source: "{{ math.number|make_id }}",
+								target: "{{ connection }}",
+							}, endpointOptions);
+						{% endfor %}
+						{% endif %}
+					{% endfor %}
+					jsPlumb.bind("connection", function(info) {
+						var source = $(info.source).attr('data-id');
+						var target = $(info.target).attr('id');
+						ajax_connection(source, target);
+					});
+					var ajax_add = function(type, number, math, tags) {
+						$.ajax({
+							type: "POST",
+							url: "{% url 'mathmanager:add' %}",
+							data: {
+								csrfmiddlewaretoken: $('[name=csrfmiddlewaretoken]').attr('value'),
+								type: type,
+								number: number,
+								math: math,
+								tags: tags,
+							},
+							success: function(data) {
+								console.log("Added successfully"+ data);
+								$('#add_form')[0].reset();
+								location.reload();
+								// $('#container').removeClass("blur");
+								// $('#overlay').hide();
+							},
+							error: function(xhr, textStatus, errorThrown) {
+								console.log("Error: "+ errorThrown + xhr.status + xhr.responseText);
+							}
+						});
+					}
+
+					$('#b_add').click(function(e) {
+						e.preventDefault();
+						var type = $('[name=type]').val();
+						var number = $('[name=number]').val();
+						var math = $('[name=math]').val();
+						var tags = $('[name=tags]').val();
+						ajax_add(type, number, math, tags);
+					});
+
+					$('#add').click(function(e) {
+						e.preventDefault();
+						$('#container').addClass("blur");
+						$('#overlay').show();
+					});
+					$('#cancel').click(function(e) {
+						e.preventDefault();
+						$('#container').removeClass("blur");
+						$('#overlay').hide();
+					});
+					$('#a_library').click(function(e) {
+						e.preventDefault();
+						$('#dropdown').toggle();
+					});
+					$('#lock').click(function(e) {
+						e.preventDefault();
+						var content = $(this).html();
+						console.log("lock");
+						$(this).html("unlock");
+					});
+					$('#filter').keyup(function(e) {
+						if (e.keyCode == 13) {
+							var tag = $(this).val();
+							$('.mathbox').hide();
+							$('.mathbox').filter(function() {
+								return $(this).data('tags').indexOf(tag) >= 0;
+							}).show();
+							$('.flclear').show();
+						}
+					});
+					$('.flclear').click(function(e) {
+						e.preventDefault();
+						$('#filter').val("");
+						$('.flclear').hide();
+						$('.mathbox').show();
+					});
+					var currentZoom = 1.0;
+					$('#zin').click(function(e) {
+						MathJax.Hub.queue.pending=1;
+						e.preventDefault();
+						$('.mathbox').animate({'font-size': (currentZoom += .2) + 'em'}, 250, function() {
+							// if (currentZoom > 0.6) {
+							// 	$('.content').show();
+							// 	$('#details').show();
+							// }
+							console.log("Current zoom: "+ currentZoom);
+							setTimeout(function() {
+								jsPlumb.repaintEverything();
+							}, 0);
+						});
+					});
+					$('#zout').click(function(e) {
+						MathJax.Hub.queue.pending=1;
+						e.preventDefault();
+						$('.mathbox').removeClass('zoom_in');
+						$('.mathbox').animate({'font-size': (currentZoom -= .2) + 'em'}, 250, function() {
+							// if (currentZoom <= 0.6) {
+							// 	$('.content').hide();
+							// 	$('#details').hide();
+							// }
+							console.log("Current zoom: "+ currentZoom);
+							setTimeout(function() {
+								jsPlumb.repaintEverything();
+							}, 0);
+						});
+					});
+					$('#repaint').click(function(e) {
+						e.preventDefault();
+						jsPlumb.repaint($(".mathbox"));
+					});
+					var clear_canvas = function() {
+						$.ajax({
+							type: "POST",
+							url: "{% url 'mathmanager:clear_canvas' %}",
+							data: {
+								csrfmiddlewaretoken: $('[name=csrfmiddlewaretoken]').attr('value'),
+							},
+							success: function(data) {
+								location.reload();
+							},
+							error: function(xhr, textStatus, errorThrown) {
+								console.log("Error: "+ errorThrown + xhr.status + xhr.responseText);
+							}
+						});
+					}
+					$('#clear').click(function(e) {
+						e.preventDefault();
+						clear_canvas();
+					});
+					$('.lib_drag').draggable({
+						appendTo: 'body',
+						containment: 'window',
+						scroll: false,
+						helper: 'clone',
+						grid: [ 20, 20 ]
+					});
+					var ajax_get = function(id, finalxPos, finalyPos, width, height) {
+						console.log('getting...');
+						$.ajax({
+							type: "POST",
+							url: "/math/get/",
+							data: {
+								csrfmiddlewaretoken: $('[name=csrfmiddlewaretoken]').attr('value'),
+								id: id,
+							},
+							success: function(data) {
+								console.log(data);
+								var json_response = data;
+								var newDiv = "<div data-id=\""+json_response.data_id+"\" id=\""+json_response.id+"\"class=\"mathbox\"><h4>" + json_response.type +" "+ json_response.number +"</h4><div class=\"content\">"+json_response.math+"</div></div>";
+								$('#container').append(newDiv);
+								$("#"+json_response.id).css({
+									position:'absolute',
+									left: finalxPos,
+									top: finalyPos,
+									width: width,
+									height: 'auto',
+									'font-size': '0.6em',
+									// 'font-size': (currentZoom + 'em'),
+								}).animate({
+										width: 600
+									}, 250);
+								jsPlumb.draggable($("#"+json_response.id), {
+									stop: function() {
+										var id = $(this).attr('data-id');
+										var finalOffset = $(this).offset();
+										var finalxPos = finalOffset.left | 0;
+										var finalyPos = finalOffset.top | 0;
+										position = (-myScroll.x + finalxPos) +","+ (-myScroll.y + finalyPos - 60);
+										ajax_position(id, position);
+									},
+									grid: [ 20, 20 ],
+									opacity: 0.9,
+								});
+								jsPlumb.addEndpoint($("#"+json_response.id), endpointOptions);
+								jsPlumb.makeTarget($("#"+json_response.id), endpointOptions);
+								// Do jax
+								MathJax.Hub.Queue(["Typeset",MathJax.Hub]);
+								setTimeout(function() {
+									jsPlumb.repaintEverything();
+								}, 200);
+							},
+							error: function(xhr, textStatus, errorThrown) {
+								console.log("Error: "+ errorThrown + xhr.status + xhr.responseText);
+							}
+						});
+					}
+					var ajax_canvas = function(id, position) {
+						$.ajax({
+							type: "POST",
+							url: "/math/canvas/",
+							data: {
+								csrfmiddlewaretoken: $('[name=csrfmiddlewaretoken]').attr('value'),
+								id: id,
+								position: position,
+							},
+							success: function(data) {
+								console.log("Added to canvas: "+ data);
+							},
+							error: function(xhr, textStatus, errorThrown) {
+								console.log("Error: "+ errorThrown + xhr.status + xhr.responseText);
+							}
+						});
+					}
+					var ajax_close = function(id) {
+						$.ajax({
+							type: "POST",
+							url: "/math/close/",
+							data: {
+								csrfmiddlewaretoken: $('[name=csrfmiddlewaretoken]').attr('value'),
+								id: id,
+							},
+							success: function(data) {
+								console.log("Removed from canvas: "+ data);
+							},
+							error: function(xhr, textStatus, errorThrown) {
+								console.log("Error: "+ errorThrown + xhr.status + xhr.responseText);
+							}
+						});
+					}
+					$('.b_close').click(function(e) {
+						e.preventDefault();
+						var id = $(this).data('id');
+						ajax_close(id);
+						$('[data-id='+id+']').remove();
+						setTimeout(function() {
+							jsPlumb.repaintEverything();
+						}, 500);
+					});
+					$('#text').bind('input', function() {
+						setTimeout(function() {
+							var math = $('#text').val();
+							$.ajax({
+								type: "POST",
+								url: "/math/preview/",
+								data: {
+									csrfmiddlewaretoken: $('[name=csrfmiddlewaretoken]').attr('value'),
+									math: math,
+								},
+								success: function(data) {
+									$('#preview').html(data.math);
+									MathJax.Hub.Queue(["Typeset",MathJax.Hub]);
+								},
+								error: function(xhr, textStatus, errorThrown) {
+									console.log("Error: "+ errorThrown + xhr.status + xhr.responseText);
+								}
+							});
+						}, 2000);
+					});
+					$('#container').droppable({
+						accept: ".lib_drag",
+						drop: function(event, ui) {
+							console.log("dropped");
+							var id = $(ui.draggable).data('id');
+							$(ui.draggable).remove();
+							var finalOffset = $('.ui-draggable-dragging').offset();
+							var finalxPos = finalOffset.left | 0;
+							var finalyPos = finalOffset.top | 0;
+							position = (-myScroll.x + finalxPos) +","+ (-myScroll.y + finalyPos - 60);
+							ajax_canvas(id, position);
+							var width = $(ui.helper).width();
+							var height = $(ui.helper).height();
+							ajax_get(id, (-myScroll.x + finalxPos), (-myScroll.y + finalyPos - 60), width, height);
+						}
+					});
+
+				});
+
+			});
+		</script>
+
+		<div id="savebox">
+		</div>
+
+		<!-- Google Analytics: change UA-XXXXX-X to be your site's ID. -->
+		<script>
+			(function(b,o,i,l,e,r){b.GoogleAnalyticsObject=l;b[l]||(b[l]=
+			function(){(b[l].q=b[l].q||[]).push(arguments)});b[l].l=+new Date;
+			e=o.createElement(i);r=o.getElementsByTagName(i)[0];
+			e.src='//www.google-analytics.com/analytics.js';
+			r.parentNode.insertBefore(e,r)}(window,document,'script','ga'));
+			ga('create','UA-48550426-2');ga('send','pageview');
+		</script>
+	</body>
+</html>
